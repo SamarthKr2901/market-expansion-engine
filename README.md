@@ -1,0 +1,178 @@
+# Market Expansion Engine (MEE)
+
+Automated B2B lead generation pipeline. Takes a location and business type as input, scrapes Google Maps for matching businesses, crawls each company website for contact data, and stores everything in a structured Supabase database ready for outreach.
+
+Built on n8n (self-hosted), SerpAPI, and Supabase. Near-zero running cost using free API tiers.
+
+> **Status: Work In Progress**
+
+---
+
+## What It Does
+
+**1. Scrape** — Query Google Maps via SerpAPI for any industry and location. Returns up to 20 businesses per query with name, address, phone, rating, hours, and coordinates.
+
+**2. Enrich** — For each lead with a website, crawl up to 3 pages (homepage, /contact, /about) with Chrome then Firefox UA fallback. Extract:
+- Email addresses (mailto links, regex, JSON-LD structured data)
+- Phone numbers (tel: links, formatted patterns)
+- 6 social platforms: LinkedIn company page, Facebook, Instagram, Twitter, YouTube, TikTok
+- Individual LinkedIn profiles linked from About/team pages
+- Company description (OpenGraph, meta tags, JSON-LD)
+- Owner/founder name (JSON-LD Person schema, text patterns)
+- Email validity via DNS MX record lookup
+
+**3. Store** — Upsert to Supabase PostgreSQL by Google Place ID. Full error logging and run audit trail.
+
+---
+
+## Stack
+
+| Layer | Tool |
+|---|---|
+| Workflow orchestration | n8n (self-hosted) |
+| Google Maps data | SerpAPI (100 free searches/month) |
+| Database | Supabase (PostgreSQL + REST API) |
+| Web crawling | Custom HTTP + regex + JSON-LD + OpenGraph |
+| Email validation | DNS MX record lookup via dns.google |
+
+---
+
+## Progress
+
+### Done
+
+- [x] Google Maps scraping via SerpAPI (any location, any industry, any country)
+- [x] Website crawling with Chrome/Firefox UA fallback per page
+- [x] Sitemap.xml fallback when /contact and /about both fail
+- [x] Email extraction: mailto links, regex, JSON-LD structured data
+- [x] Phone extraction: tel: links + formatted patterns with strict validation
+- [x] 6 social platform extraction with false-positive blacklists
+- [x] Individual LinkedIn profile extraction from About/team pages
+- [x] Company description extraction (OpenGraph, meta, JSON-LD)
+- [x] Owner name extraction from JSON-LD Person schema and text patterns
+- [x] Location-aware email scoring (prefers city-relevant email over generic)
+- [x] DNS MX validation for extracted emails
+- [x] Multi-query support with Place ID deduplication
+- [x] Webhook-based API (parameterized for any location and industry)
+- [x] Supabase schema: leads, lead_enrichment, lead_errors, scrape_runs, enrichment_runs
+- [x] Error logging per lead (HARD_BLOCKED, NO_EMAIL_FOUND)
+- [x] Run audit trail for every scrape and enrichment execution
+- [x] Combined pipeline endpoint (scrape + enrich in one webhook call)
+- [x] Tested across two countries: Dallas TX (US) and Lucknow, India
+
+### To Do
+
+- [ ] Caching layer: skip re-enriching leads enriched within the last 30 days
+- [ ] LLM company summary: send website HTML to Groq/Gemini free tier, generate business context
+- [ ] Personalized outreach generation: LinkedIn message, email draft, call script per lead
+- [ ] Decision maker extraction improvement: owner name + title from team pages
+- [ ] Hunter.io fallback: 25 free domain email searches/month for leads with no email found
+- [ ] Apollo.io fallback: 50 free credits/month, returns name + title + email together
+- [ ] Frontend dashboard: Next.js over Supabase to run searches, view leads, trigger outreach
+- [ ] Geographic grid scanning: tile a search area for more than 20 results per run
+- [ ] LLM query expansion: auto-generate industry query variations per search
+
+---
+
+## Workflows
+
+| File | n8n Workflow | Description |
+|---|---|---|
+| `workflows/01_mee-scraper.json` | MEE — Google Maps Scraper | Accepts webhook POST, queries SerpAPI, writes leads to Supabase |
+| `workflows/02_mee-enrichment.json` | MEE — Website Enrichment | Reads all leads from Supabase, crawls websites, writes contact data |
+| `workflows/03_mee-combined.json` | MEE — Combined Run | Calls scraper then enrichment in sequence, returns unified response |
+
+---
+
+## Setup
+
+### Prerequisites
+
+- n8n instance (self-hosted or cloud)
+- SerpAPI account — [serpapi.com](https://serpapi.com) (free tier: 100 searches/month)
+- Supabase project — [supabase.com](https://supabase.com) (free tier available)
+
+### 1. Database
+
+Run `database/schema.sql` in your Supabase SQL editor to create all tables, indexes, triggers, and the `leads_full` view.
+
+### 2. Replace Placeholders
+
+Before importing workflows into n8n, replace these strings in the JSON files:
+
+| Placeholder | Replace with |
+|---|---|
+| `YOUR_SERPAPI_KEY` | Your SerpAPI API key |
+| `YOUR_SUPABASE_PROJECT_REF` | Your Supabase project reference ID |
+| `YOUR_SUPABASE_PUBLISHABLE_KEY` | Your Supabase anon/publishable key |
+| `YOUR_N8N_INSTANCE_URL` | Your n8n instance hostname |
+
+### 3. Import Workflows
+
+In n8n: Settings > Import workflow. Import in order: scraper, enrichment, combined. Activate all three.
+
+---
+
+## Usage
+
+### Full pipeline (scrape + enrich)
+
+```bash
+curl -X POST "https://YOUR_N8N_INSTANCE_URL/webhook/mee-run" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "property management companies",
+    "lat": 32.7767,
+    "lng": -96.797,
+    "zoom": 12,
+    "countryCode": "us"
+  }'
+```
+
+### Parameters
+
+| Parameter | Required | Default | Description |
+|---|---|---|---|
+| `query` | Yes | | Business type to search for |
+| `lat` | Yes | | Latitude of target area |
+| `lng` | Yes | | Longitude of target area |
+| `zoom` | No | 12 | Search radius (11=wider, 14=tighter) |
+| `countryCode` | No | `us` | Two-letter country code |
+| `language` | No | `en` | Language code |
+| `resultsPerQuery` | No | 20 | Max results (capped at 20) |
+
+### Endpoints
+
+| Endpoint | Use |
+|---|---|
+| `POST /webhook/mee-run` | Full pipeline: scrape + enrich |
+| `POST /webhook/mee-scrape` | Scrape only |
+| `POST /webhook/mee-enrich` | Enrich existing leads only, body can be `{}` |
+
+---
+
+## Database Schema
+
+Five tables and one view in Supabase:
+
+| Table | Purpose |
+|---|---|
+| `leads` | Core business data from Google Maps, keyed by Place ID |
+| `lead_enrichment` | Website crawl results, one row per lead |
+| `lead_errors` | Append-only error log per run (HARD_BLOCKED, NO_EMAIL_FOUND) |
+| `scrape_runs` | Audit log for every scrape execution |
+| `enrichment_runs` | Audit log for every enrichment execution |
+| `leads_full` (view) | Joined view of leads + enrichment for easy querying |
+
+Leads and enrichment upsert by `place_id` (no duplicates across runs). Error and run tables are append-only.
+
+---
+
+## Results on Test Data
+
+| Location | Leads | With Email | With Phone | Blocked |
+|---|---|---|---|---|
+| Dallas, TX (US) | 20 | 10 | 17 | 3 |
+| Lucknow, India | 20 | 10 | 3 | 1 |
+
+Enrichment runs in under 90 seconds for 20 leads. Total infrastructure cost: free tier on all services.
