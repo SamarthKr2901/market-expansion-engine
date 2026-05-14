@@ -191,6 +191,22 @@ CREATE TRIGGER update_sender_profiles_updated_at
   BEFORE UPDATE ON sender_profiles
   FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
+-- Auto-set sent_at when outreach status changes to 'sent' (T4.4)
+CREATE OR REPLACE FUNCTION set_outreach_sent_at()
+RETURNS TRIGGER AS $$
+BEGIN
+  IF NEW.status = 'sent' AND (OLD.status IS DISTINCT FROM 'sent') THEN
+    NEW.sent_at = NOW();
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_outreach_sent_at ON lead_outreach;
+CREATE TRIGGER trg_outreach_sent_at
+  BEFORE UPDATE ON lead_outreach
+  FOR EACH ROW EXECUTE FUNCTION set_outreach_sent_at();
+
 -- ============================================================
 -- LEAD QUALITY SCORING FUNCTION
 -- Scores each enriched lead 0-100 across four blocks:

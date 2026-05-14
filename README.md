@@ -72,7 +72,11 @@ Built on n8n (self-hosted), SerpAPI, and Supabase. Near-zero running cost using 
 - [x] Caching layer: skip re-enriching leads enriched within last 30 days (reads from leads_full, filters enriched_at)
 - [x] Lead quality score (0-100): computed column in leads_full view via Postgres function across 4 blocks — contact reachability (max 48), data depth (max 22), business legitimacy (max 25), LLM personalization bonus (max 10)
 - [ ] Gemini Flash fallback for Groq outreach generation failures
-- [ ] Gmail send node: added as dormant nodes (Split Email Items + Gmail Send) — enable after adding Google OAuth2 credential
+- [x] Gmail send node: added as dormant nodes (Split Email Items + Gmail Send) — enable after adding Google OAuth2 credential
+- [x] Outreach status tracking: `sent_at` auto-set via trigger when status changes to 'sent'. UI marks draft→sent→replied
+- [x] Multi-query runs: `/mee-enrich` and `/mee-run` accept `place_ids[]` to bypass 30-day cache and target specific leads
+- [x] Vertical-specific prompt tuning: 13 industry pain-point maps injected into LLM prompt when `target_industry` matches (property management, dental, restaurant, legal, and 9 more)
+- [x] Re-enrich specific leads: pass `place_ids[]` to `/mee-enrich` to force-re-crawl specific leads regardless of cache
 - [ ] Decision maker extraction improvement: owner name + title from team pages
 - [ ] Hunter.io fallback: 25 free domain email searches/month for leads with no email found
 - [ ] Apollo.io fallback: 50 free credits/month, returns name + title + email together
