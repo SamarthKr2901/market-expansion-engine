@@ -11,6 +11,12 @@
 1. Sign up at [serpapi.com](https://serpapi.com) — free tier gives 100 searches/month
 2. Copy your API key from the dashboard
 
+## 2b. Groq (for outreach workflow only)
+
+1. Sign up at [console.groq.com](https://console.groq.com) — free tier, no card required
+2. Create an API key under API Keys
+3. Free limits: 14,400 requests/day, 500,000 tokens/day — more than enough for 50 leads/run
+
 ## 3. n8n
 
 1. Install n8n: `npm install -g n8n` or use the Docker image
@@ -24,7 +30,26 @@
    - `01_mee-scraper.json`
    - `02_mee-enrichment.json`
    - `03_mee-combined.json`
-4. Activate all three workflows
+   - `04_mee-outreach.json`
+4. Activate all four workflows
+
+## 5. Create Your First Sender Profile
+
+Run this in your Supabase SQL editor (adjust to your actual details):
+
+```sql
+INSERT INTO sender_profiles (profile_name, owner_name, company_name, service_description, value_proposition, target_industry)
+VALUES (
+  'My default pitch',
+  'Your Name',
+  'Your Company Name',
+  'One sentence: what you do and who you help',
+  'One sentence: why choose you over alternatives',
+  'property management'  -- or whatever industry you are targeting
+);
+```
+
+Note the UUID it returns — you will pass it as `profile_id` when calling `/webhook/mee-outreach`.
 
 ## 5. Test Run
 

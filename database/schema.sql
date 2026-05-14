@@ -144,6 +144,54 @@ CREATE TRIGGER update_enrichment_updated_at
   FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
 -- ============================================================
+-- SENDER PROFILES — outreach sender identities / pitch library
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS sender_profiles (
+  id                  UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  profile_name        TEXT NOT NULL,           -- "My agency pitch", "My SaaS pitch"
+  owner_name          TEXT NOT NULL,           -- sender's actual name
+  company_name        TEXT NOT NULL,
+  service_description TEXT NOT NULL,           -- what you do / offer
+  value_proposition   TEXT,                    -- what makes you different
+  target_industry     TEXT,                    -- e.g. "property management", "dental"
+  is_default          BOOLEAN DEFAULT FALSE,   -- the global fallback profile
+  created_at          TIMESTAMPTZ DEFAULT NOW(),
+  updated_at          TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS lead_outreach (
+  id                       UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  place_id                 TEXT REFERENCES leads(place_id) ON DELETE CASCADE,
+  profile_id               UUID REFERENCES sender_profiles(id) ON DELETE SET NULL,
+  channel                  TEXT NOT NULL CHECK (channel IN ('email', 'linkedin', 'whatsapp')),
+  tone                     TEXT NOT NULL DEFAULT 'professional' CHECK (tone IN ('professional', 'conversational', 'direct')),
+  subject_line             TEXT,
+  message_body             TEXT NOT NULL,
+  linkedin_connection_note TEXT,
+  whatsapp_link            TEXT,
+  personalization_score    INTEGER CHECK (personalization_score BETWEEN 1 AND 5),
+  personalization_notes    TEXT,
+  status                   TEXT DEFAULT 'draft' CHECK (status IN ('draft', 'sent', 'replied')),
+  sent_at                  TIMESTAMPTZ,
+  model_used               TEXT,               -- 'groq-llama3.3-70b', 'gemini-2.0-flash', 'failed'
+  generated_at             TIMESTAMPTZ DEFAULT NOW(),
+  created_at               TIMESTAMPTZ DEFAULT NOW(),
+  CONSTRAINT lead_outreach_unique UNIQUE (place_id, profile_id, channel)
+);
+
+CREATE INDEX IF NOT EXISTS idx_sender_profiles_default  ON sender_profiles(is_default);
+CREATE INDEX IF NOT EXISTS idx_lead_outreach_place_id   ON lead_outreach(place_id);
+CREATE INDEX IF NOT EXISTS idx_lead_outreach_profile_id ON lead_outreach(profile_id);
+CREATE INDEX IF NOT EXISTS idx_lead_outreach_status     ON lead_outreach(status);
+CREATE INDEX IF NOT EXISTS idx_lead_outreach_channel    ON lead_outreach(channel);
+
+DROP TRIGGER IF EXISTS update_sender_profiles_updated_at ON sender_profiles;
+CREATE TRIGGER update_sender_profiles_updated_at
+  BEFORE UPDATE ON sender_profiles
+  FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+-- ============================================================
 -- VIEW
 -- ============================================================
 

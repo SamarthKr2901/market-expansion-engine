@@ -59,12 +59,17 @@ Built on n8n (self-hosted), SerpAPI, and Supabase. Near-zero running cost using 
 - [x] Run audit trail for every scrape and enrichment execution
 - [x] Combined pipeline endpoint (scrape + enrich in one webhook call)
 - [x] Tested across two countries: Dallas TX (US) and Lucknow, India
+- [x] LLM outreach generation: Groq (Llama 3.3-70b) generates cold email, LinkedIn message, WhatsApp message per lead
+- [x] Sender profile library: multiple named profiles ("My agency pitch", "My SaaS pitch") with per-run channel + tone selection
+- [x] Personalization score (1-5) and notes per generated message
+- [x] WhatsApp wa.me deep links auto-generated from lead phone numbers
+- [x] Outreach stored in Supabase lead_outreach table, upsert by (lead, profile, channel)
 
 ### To Do
 
 - [ ] Caching layer: skip re-enriching leads enriched within the last 30 days
-- [ ] LLM company summary: send website HTML to Groq/Gemini free tier, generate business context
-- [ ] Personalized outreach generation: LinkedIn message, email draft, call script per lead
+- [ ] Gemini Flash fallback for Groq outreach generation failures
+- [ ] Gmail send node: trigger cold email directly from n8n via Google OAuth
 - [ ] Decision maker extraction improvement: owner name + title from team pages
 - [ ] Hunter.io fallback: 25 free domain email searches/month for leads with no email found
 - [ ] Apollo.io fallback: 50 free credits/month, returns name + title + email together
@@ -81,6 +86,7 @@ Built on n8n (self-hosted), SerpAPI, and Supabase. Near-zero running cost using 
 | `workflows/01_mee-scraper.json` | MEE — Google Maps Scraper | Accepts webhook POST, queries SerpAPI, writes leads to Supabase |
 | `workflows/02_mee-enrichment.json` | MEE — Website Enrichment | Reads all leads from Supabase, crawls websites, writes contact data |
 | `workflows/03_mee-combined.json` | MEE — Combined Run | Calls scraper then enrichment in sequence, returns unified response |
+| `workflows/04_mee-outreach.json` | MEE — LLM Outreach Generator | Reads enriched leads, calls Groq (Llama 3.3-70b), generates cold email / LinkedIn / WhatsApp messages, stores in Supabase |
 
 ---
 
@@ -106,6 +112,7 @@ Before importing workflows into n8n, replace these strings in the JSON files:
 | `YOUR_SUPABASE_PROJECT_REF` | Your Supabase project reference ID |
 | `YOUR_SUPABASE_PUBLISHABLE_KEY` | Your Supabase anon/publishable key |
 | `YOUR_N8N_INSTANCE_URL` | Your n8n instance hostname |
+| `YOUR_GROQ_API_KEY` | Your Groq API key (free at console.groq.com) — only needed for workflow 04 |
 
 ### 3. Import Workflows
 
@@ -148,6 +155,40 @@ curl -X POST "https://YOUR_N8N_INSTANCE_URL/webhook/mee-run" \
 | `POST /webhook/mee-run` | Full pipeline: scrape + enrich |
 | `POST /webhook/mee-scrape` | Scrape only |
 | `POST /webhook/mee-enrich` | Enrich existing leads only, body can be `{}` |
+| `POST /webhook/mee-outreach` | Generate LLM outreach messages for enriched leads |
+
+### Outreach (generate messages)
+
+First create a sender profile in Supabase:
+
+```sql
+INSERT INTO sender_profiles (profile_name, owner_name, company_name, service_description, value_proposition, target_industry)
+VALUES ('My agency pitch', 'Your Name', 'Your Company', 'We build marketing automation systems for local service businesses', 'Done-for-you setup, no monthly retainer', 'property management');
+```
+
+Then call the outreach endpoint with the returned profile UUID:
+
+```bash
+curl -X POST "http://localhost:5678/webhook/mee-outreach" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "profile_id": "uuid-from-sender-profiles-table",
+    "channel": "email",
+    "tone": "professional",
+    "place_ids": []
+  }'
+```
+
+Leave `place_ids` empty to generate for all enriched leads (up to 50), or pass specific IDs to target a subset.
+
+### Outreach parameters
+
+| Parameter | Required | Default | Description |
+|---|---|---|---|
+| `profile_id` | Yes | | UUID from sender_profiles table |
+| `channel` | No | `email` | `email`, `linkedin`, or `whatsapp` |
+| `tone` | No | `professional` | `professional`, `conversational`, or `direct` |
+| `place_ids` | No | `[]` | Array of place IDs. Empty = all enriched leads |
 
 ---
 
@@ -162,9 +203,11 @@ Five tables and one view in Supabase:
 | `lead_errors` | Append-only error log per run (HARD_BLOCKED, NO_EMAIL_FOUND) |
 | `scrape_runs` | Audit log for every scrape execution |
 | `enrichment_runs` | Audit log for every enrichment execution |
+| `sender_profiles` | Named outreach sender identities ("My agency pitch", "My SaaS pitch") |
+| `lead_outreach` | Generated messages per lead, upsert by (lead, profile, channel) |
 | `leads_full` (view) | Joined view of leads + enrichment for easy querying |
 
-Leads and enrichment upsert by `place_id` (no duplicates across runs). Error and run tables are append-only.
+Leads and enrichment upsert by `place_id` (no duplicates across runs). Error and run tables are append-only. Outreach upserts by `(place_id, profile_id, channel)` — re-running regenerates and overwrites the draft.
 
 ---
 
