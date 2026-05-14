@@ -64,12 +64,14 @@ Built on n8n (self-hosted), SerpAPI, and Supabase. Near-zero running cost using 
 - [x] Personalization score (1-5) and notes per generated message
 - [x] WhatsApp wa.me deep links auto-generated from lead phone numbers
 - [x] Outreach stored in Supabase lead_outreach table, upsert by (lead, profile, channel)
+- [x] LinkedIn (36/37) and WhatsApp (35/37) drafts generated — wa.me deep links auto-built from lead phone numbers
+- [x] Gmail send path added as dormant nodes (disabled by default, activate when Google OAuth2 is configured)
 
 ### To Do
 
-- [ ] Caching layer: skip re-enriching leads enriched within the last 30 days
+- [x] Caching layer: skip re-enriching leads enriched within last 30 days (reads from leads_full, filters enriched_at)
 - [ ] Gemini Flash fallback for Groq outreach generation failures
-- [ ] Gmail send node: trigger cold email directly from n8n via Google OAuth
+- [ ] Gmail send node: added as dormant nodes (Split Email Items + Gmail Send) — enable after adding Google OAuth2 credential
 - [ ] Decision maker extraction improvement: owner name + title from team pages
 - [ ] Hunter.io fallback: 25 free domain email searches/month for leads with no email found
 - [ ] Apollo.io fallback: 50 free credits/month, returns name + title + email together

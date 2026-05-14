@@ -165,6 +165,34 @@
       "parameters": {
         "options": {}
       }
+    },
+    {
+      "id": "out-email-split",
+      "name": "Split Email Items",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2160, 520],
+      "disabled": true,
+      "notes": "DORMANT — enable this + Gmail Send when ready to send. Splits the messages summary into one item per email lead.",
+      "parameters": {
+        "jsCode": "// [DORMANT] Splits outreach summary into one item per email lead\n// Enable this node + Gmail Send (Dormant) when ready to send\nvar data = $input.first().json;\nvar emailMessages = (data.messages || []).filter(function(m) {\n  return m.channel === 'email' && m.email && m.model_used !== 'failed';\n});\nreturn emailMessages.map(function(m) {\n  return {\n    json: {\n      to: m.email,\n      subject: m.subject_line || 'Following up from OyeLabs',\n      body: m.message_body,\n      business_name: m.business_name,\n      place_id: m.place_id\n    }\n  };\n});"
+      }
+    },
+    {
+      "id": "out-gmail-send",
+      "name": "Gmail Send (Dormant)",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [2400, 520],
+      "disabled": true,
+      "notes": "DORMANT — configure Google OAuth2 credential, then enable this + Split Email Items to activate sending.",
+      "parameters": {
+        "operation": "send",
+        "sendTo": "={{ $json.to }}",
+        "subject": "={{ $json.subject }}",
+        "message": "={{ $json.body }}",
+        "options": {}
+      }
     }
   ],
   "connections": {
@@ -177,7 +205,8 @@
     "Call Groq": {"main": [[{"node": "Parse & Build Record", "type": "main", "index": 0}]]},
     "Parse & Build Record": {"main": [[{"node": "Upsert Outreach", "type": "main", "index": 0}]]},
     "Upsert Outreach": {"main": [[{"node": "Collect Results", "type": "main", "index": 0}]]},
-    "Collect Results": {"main": [[{"node": "Respond to Webhook", "type": "main", "index": 0}]]}
+    "Collect Results": {"main": [[{"node": "Respond to Webhook", "type": "main", "index": 0}, {"node": "Split Email Items", "type": "main", "index": 0}]]},
+    "Split Email Items": {"main": [[{"node": "Gmail Send (Dormant)", "type": "main", "index": 0}]]}
   },
   "settings": {
     "executionOrder": "v1",
