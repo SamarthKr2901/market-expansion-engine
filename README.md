@@ -70,6 +70,7 @@ Built on n8n (self-hosted), SerpAPI, and Supabase. Near-zero running cost using 
 ### To Do
 
 - [x] Caching layer: skip re-enriching leads enriched within last 30 days (reads from leads_full, filters enriched_at)
+- [x] Lead quality score (0-100): computed column in leads_full view via Postgres function across 4 blocks — contact reachability (max 48), data depth (max 22), business legitimacy (max 25), LLM personalization bonus (max 10)
 - [ ] Gemini Flash fallback for Groq outreach generation failures
 - [ ] Gmail send node: added as dormant nodes (Split Email Items + Gmail Send) — enable after adding Google OAuth2 credential
 - [ ] Decision maker extraction improvement: owner name + title from team pages
@@ -207,9 +208,23 @@ Five tables and one view in Supabase:
 | `enrichment_runs` | Audit log for every enrichment execution |
 | `sender_profiles` | Named outreach sender identities ("My agency pitch", "My SaaS pitch") |
 | `lead_outreach` | Generated messages per lead, upsert by (lead, profile, channel) |
-| `leads_full` (view) | Joined view of leads + enrichment for easy querying |
+| `leads_full` (view) | Joined view: leads + enrichment + best personalization score + computed `lead_quality_score` (0-100) |
 
 Leads and enrichment upsert by `place_id` (no duplicates across runs). Error and run tables are append-only. Outreach upserts by `(place_id, profile_id, channel)` — re-running regenerates and overwrites the draft.
+
+### Lead Quality Score
+
+`lead_quality_score` (0-100) is a computed column in `leads_full`, calculated by `compute_lead_quality_score()`:
+
+| Block | Max | Key signals |
+|---|---|---|
+| Contact reachability | 48 | Valid email (+25), domain match (+8), owner name (+7), phone (+5), LinkedIn profiles (+3) |
+| Data depth | 22 | Pages crawled (+12/7), company description (+8/4), sitemap used (+2) |
+| Business legitimacy | 25 | Google rating (+10 to +2), review count (+8 to -5), has description/hours |
+| LLM personalization | 10 | Best personalization_score across channels (5→+10, 4→+7, 3→+4) |
+| Penalties | — | Hard blocked (-10), no website (cap at 25) |
+
+**Tiers:** 🟢 75-100 Ready · 🟡 50-74 Review · 🟠 25-49 Low · 🔴 0-24 Skip
 
 ---
 

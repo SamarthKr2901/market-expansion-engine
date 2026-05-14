@@ -192,6 +192,107 @@ CREATE TRIGGER update_sender_profiles_updated_at
   FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
 -- ============================================================
+-- LEAD QUALITY SCORING FUNCTION
+-- Scores each enriched lead 0-100 across four blocks:
+--   A) Contact reachability  (max 48)
+--   B) Data depth            (max 22)
+--   C) Business legitimacy   (max 25)
+--   D) LLM personalization   (max 10, bonus)
+-- Penalties: hard-blocked (-10), no website (cap at 25)
+-- ============================================================
+
+CREATE OR REPLACE FUNCTION compute_lead_quality_score(
+  p_website             TEXT,
+  p_google_rating       NUMERIC,
+  p_review_count        INTEGER,
+  p_maps_description    TEXT,
+  p_opening_hours       TEXT,
+  p_email               TEXT,
+  p_email_valid         TEXT,
+  p_website_phone       TEXT,
+  p_owner_name          TEXT,
+  p_company_description TEXT,
+  p_crawl_status        TEXT,
+  p_pages_crawled       INTEGER,
+  p_sitemap_used        BOOLEAN,
+  p_linkedin_profiles   TEXT,
+  p_best_personalization_score INTEGER
+) RETURNS INTEGER AS $$
+DECLARE
+  score          INTEGER := 0;
+  email_domain   TEXT;
+  website_domain TEXT;
+  is_free_email  BOOLEAN := FALSE;
+BEGIN
+  -- BLOCK A: CONTACT REACHABILITY (max 48)
+  IF p_email_valid = 'valid' THEN score := score + 25;
+  ELSIF p_email IS NOT NULL AND p_email != '' THEN score := score + 12;
+  END IF;
+
+  IF p_email IS NOT NULL AND p_email != '' THEN
+    email_domain := LOWER(SPLIT_PART(p_email, '@', 2));
+    is_free_email := email_domain = ANY(ARRAY[
+      'gmail.com','yahoo.com','hotmail.com','outlook.com','icloud.com',
+      'aol.com','yahoo.co.in','rediffmail.com','live.com','msn.com'
+    ]);
+    IF NOT is_free_email THEN
+      IF p_website IS NOT NULL AND p_website != '' THEN
+        website_domain := LOWER(REGEXP_REPLACE(p_website,'^https?://(www\.)?([^/?#]+).*$','\2'));
+        IF email_domain = website_domain THEN score := score + 8;
+        ELSE score := score + 4; END IF;
+      ELSE score := score + 4; END IF;
+    END IF;
+  END IF;
+
+  IF p_owner_name IS NOT NULL AND p_owner_name != ''         THEN score := score + 7; END IF;
+  IF p_website_phone IS NOT NULL AND p_website_phone != ''   THEN score := score + 5; END IF;
+  IF p_linkedin_profiles IS NOT NULL AND p_linkedin_profiles != '' THEN score := score + 3; END IF;
+
+  -- BLOCK B: DATA DEPTH (max 22)
+  IF    p_pages_crawled >= 3 THEN score := score + 12;
+  ELSIF p_pages_crawled >= 1 THEN score := score + 7; END IF;
+
+  IF p_company_description IS NOT NULL THEN
+    IF    LENGTH(p_company_description) > 100 THEN score := score + 8;
+    ELSIF LENGTH(p_company_description) > 20  THEN score := score + 4; END IF;
+  END IF;
+
+  IF p_sitemap_used = TRUE THEN score := score + 2; END IF;
+
+  -- BLOCK C: BUSINESS LEGITIMACY (max 25)
+  IF    p_google_rating >= 4.5 THEN score := score + 10;
+  ELSIF p_google_rating >= 4.0 THEN score := score + 7;
+  ELSIF p_google_rating >= 3.5 THEN score := score + 4;
+  ELSIF p_google_rating >= 3.0 THEN score := score + 2; END IF;
+
+  IF    p_review_count IS NULL OR p_review_count = 0 THEN score := score - 5;
+  ELSIF p_review_count < 5  THEN score := score - 3;
+  ELSIF p_review_count < 10 THEN score := score + 1;
+  ELSIF p_review_count < 20 THEN score := score + 3;
+  ELSIF p_review_count < 50 THEN score := score + 5;
+  ELSE                           score := score + 8; END IF;
+
+  IF p_maps_description IS NOT NULL AND p_maps_description != '' THEN score := score + 4; END IF;
+  IF p_opening_hours IS NOT NULL AND p_opening_hours != ''       THEN score := score + 3; END IF;
+
+  -- BLOCK D: LLM PERSONALIZATION BONUS (max 10)
+  IF    p_best_personalization_score >= 5 THEN score := score + 10;
+  ELSIF p_best_personalization_score >= 4 THEN score := score + 7;
+  ELSIF p_best_personalization_score >= 3 THEN score := score + 4; END IF;
+
+  -- PENALTIES
+  IF p_crawl_status LIKE 'blocked%' THEN score := score - 10; END IF;
+
+  -- Hard gate: no website caps score at 25
+  IF p_website IS NULL OR p_website = '' THEN
+    RETURN GREATEST(0, LEAST(25, score));
+  END IF;
+
+  RETURN GREATEST(0, LEAST(100, score));
+END;
+$$ LANGUAGE plpgsql IMMUTABLE;
+
+-- ============================================================
 -- VIEW
 -- ============================================================
 
@@ -216,6 +317,20 @@ SELECT
   e.crawl_status,
   e.sitemap_used,
   e.pages_crawled,
-  e.enriched_at
+  e.enriched_at,
+  lo.best_personalization_score,
+  compute_lead_quality_score(
+    l.website, l.google_rating, l.review_count, l.maps_description,
+    l.opening_hours, e.email, e.email_valid, e.website_phone,
+    e.owner_name, e.company_description, e.crawl_status,
+    e.pages_crawled, e.sitemap_used, e.linkedin_profiles,
+    lo.best_personalization_score
+  ) AS lead_quality_score
 FROM leads l
-LEFT JOIN lead_enrichment e ON l.place_id = e.place_id;
+LEFT JOIN lead_enrichment e ON l.place_id = e.place_id
+LEFT JOIN (
+  SELECT place_id, MAX(personalization_score) AS best_personalization_score
+  FROM lead_outreach
+  WHERE model_used IS NOT NULL AND model_used != 'failed'
+  GROUP BY place_id
+) lo ON l.place_id = lo.place_id;
